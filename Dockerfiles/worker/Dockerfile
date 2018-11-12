@@ -14,7 +14,7 @@
 
 FROM openjdk:8-jdk-slim-stretch AS build
 
-ARG repo="https://github.com/opencast/opencast.git"
+ARG repo="https://github.com/cilt-uct/opencast.git"
 ARG branch="r/6.x"
 
 ENV OPENCAST_DISTRIBUTION="worker" \
