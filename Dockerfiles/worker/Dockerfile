@@ -15,7 +15,9 @@
 FROM openjdk:8-jdk-slim-stretch AS build
 
 ARG repo="https://github.com/cilt-uct/opencast.git"
+ARG configrepo="https://bitbucket.org/cilt/oc-scripts.git"
 ARG branch="r/6.x"
+ARG configbranch="r/6.x"
 
 ENV OPENCAST_DISTRIBUTION="worker" \
     OPENCAST_SRC="/usr/src/opencast" \
@@ -23,20 +25,32 @@ ENV OPENCAST_DISTRIBUTION="worker" \
     OPENCAST_UID="800" \
     OPENCAST_GID="800" \
     OPENCAST_REPO="${repo}" \
-    OPENCAST_BRANCH="${branch}"
+    OPENCAST_BRANCH="${branch}" \
+    CONFIG_REPO="${configrepo}" \
+    CONFIG_SRC="/usr/src/oc-scripts" \
+    CONFIG_BRANCH="${configbranch}"
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tar gzip git \
       ca-certificates openssl \
       maven make gcc g++ libc-dev \
- && mkdir -p "${OPENCAST_SRC}" "${OPENCAST_HOME}" \
+ && mkdir -p "${OPENCAST_SRC}" "${OPENCAST_HOME}" "${CONFIG_SRC}" \
  && git clone --recursive "${OPENCAST_REPO}" "${OPENCAST_SRC}" \
+ && git clone --recursive "${CONFIG_REPO}" "${CONFIG_SRC}" \
  && cd "${OPENCAST_SRC}" \
  && git checkout "${OPENCAST_BRANCH}" \
  && mvn --quiet --batch-mode install -DskipTests=true -Dcheckstyle.skip=true -DskipJasmineTests=true \
  && tar -xzf build/opencast-dist-${OPENCAST_DISTRIBUTION}-*.tar.gz --strip 1 -C "${OPENCAST_HOME}" \
  && rm -rf "${OPENCAST_SRC}" /tmp/* /var/lib/apt/lists/* ~/.m2 ~/.npm ~/.node-gyp /usr/lib/node_modules
+
+RUN cd "${CONFIG_SRC}" \
+ && git checkout "${OPENCAST_BRANCH}" \
+ && mkdir "${OPENCAST_HOME}"/wfexec \
+ && cp files/config/default/etc/org.opencastproject.execute.impl.ExecuteServiceImpl.cfg "${OPENCAST_HOME}"/etc/ \
+ && cp files/worker/wfexec/* "${OPENCAST_HOME}"/wfexec \
+ && cp files/config/default/etc/workflows/* "${OPENCAST_HOME}"/etc/workflows \
+ && cp files/config/default/etc/encoding/* "${OPENCAST_HOME}"/etc/encoding
 
 FROM quay.io/mtneug/synfig-core AS synfig
 
@@ -61,12 +75,12 @@ ENV LANG="C.UTF-8" \
     OPENCAST_VERSION="next" \
     OPENCAST_DISTRIBUTION="worker" \
     OPENCAST_HOME="/opencast" \
-    OPENCAST_DATA="/data" \
+    OPENCAST_DATA="/srv/opencast" \
     OPENCAST_CUSTOM_CONFIG="/etc/opencast" \
     OPENCAST_USER="opencast" \
     OPENCAST_GROUP="opencast" \
-    OPENCAST_UID="800" \
-    OPENCAST_GID="800"
+    OPENCAST_UID="1004" \
+    OPENCAST_GID="1004"
 ENV OPENCAST_SCRIPTS="${OPENCAST_HOME}/docker/scripts" \
     OPENCAST_SUPPORT="${OPENCAST_HOME}/docker/support" \
     OPENCAST_CONFIG="${OPENCAST_HOME}/etc" \
@@ -98,15 +112,18 @@ RUN apk add --no-cache \
       bash su-exec openssl tzdata curl jq \
       fontconfig ttf-dejavu ttf-freefont ttf-liberation ttf-linux-libertine \
       ffmpeg sox hunspell tesseract-ocr \
-      nfs-utils \
-  \
+      git \
+      perl perl-lwp-protocol-https perl-json perl-libwww \
+      python py2-pip py-numpy-dev py-scipy freetype-dev build-base py-eyed3 \
+ && pip install sklearn matplotlib scikit-learn pydub hmmlearn \
  && apk add --no-cache \
       boost boost-program_options boost-system boost-filesystem zlib libsigc++ glibmm cairo fftw pango gettext \
       imagemagick6 imagemagick6-dev libjpeg-turbo libtool libdv-tools \
  && apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/v3.7/main \
       swfdec \
  && apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
-      libxml++-2.6 mlt \
+      libxml++-2.6 \
+# mlt \
  && ln -s /usr/bin/convert-6 /usr/local/bin/convert \
   \
  && javac "${OPENCAST_SCRIPTS}/TryToConnectToDb.java" \
@@ -129,10 +146,36 @@ RUN apk add --no-cache \
  && cp *.aff *.dic /usr/share/hunspell \
  && rm -rf /tmp/*
 
+RUN cd "${OPENCAST_HOME}" \
+  && sed -i 's/{{ORG_OPENCASTPROJECT_DB_JDBC_URL}}/jdbc:mysql:\/\/mediadev.uct.ac.za:3306\/opencast?useSSL=false/g' etc/custom.properties \
+  && sed -i 's/{{ORG_OPENCASTPROJECT_DB_VENDOR}}/MySQL/g' etc/custom.properties \
+#  && sed -i 's/\/opt//g' etc/org.opencastproject.execute.impl.ExecuteServiceImpl.cfg \
+  && echo "job.load.execute = 1.0" > etc/org.opencastproject.execute.impl.ExecuteServiceImpl.cfg \
+  && echo "commands.allowed = *" >> etc/org.opencastproject.execute.impl.ExecuteServiceImpl.cfg \
+  && mkdir -p /opt/opencast/wfexec && ln -s /opencast/wfexec/* /opt/opencast/wfexec/ \
+  && echo "#! /usr/bin/perl" > wfexec/event-timetable.pl \
+  && echo "use strict;" >>  wfexec/event-timetable.pl \
+  && echo 'my $mpid = $ARGV[0];' >> wfexec/event-timetable.pl \
+  && echo 'my $filename = $ARGV[1];' >> wfexec/event-timetable.pl \
+  && echo 'open(my $fh, ">", $filename) or die "Could not open result file $filename $!";' >> wfexec/event-timetable.pl \
+  && echo 'print $fh "timetabled=false\n";' >> wfexec/event-timetable.pl \
+  && echo 'print $fh "timetable_info=\n";' >> wfexec/event-timetable.pl \
+  && echo 'print $fh "timetable_comment=nothing\n";' >> wfexec/event-timetable.pl \
+  && echo 'print $fh "event_location=a_venue\n";' >> wfexec/event-timetable.pl \
+  && echo 'print $fh "event_trim=true\n";' >> wfexec/event-timetable.pl \
+  && echo 'close $fh;' >> wfexec/event-timetable.pl \
+  && echo 'exit;' >> wfexec/event-timetable.pl \
+  && sed -i 's/\${org.opencastproject.storage.dir}\/workspace/\/data\/workspace/g' etc/custom.properties
+
+RUN git clone --recursive https://github.com/cilt-uct/TrimPointDetector.git /opt/trimpointdetector \
+  && git clone --recursive https://github.com/tyiannak/pyAudioAnalysis /opt/pyAudioAnalysis \
+  && cd /opt/trimpointdetector \
+  && ln -s /opt/pyAudioAnalysis/pyAudioAnalysis .
+
 WORKDIR "${OPENCAST_HOME}"
 
 EXPOSE 8080
-VOLUME [ "${OPENCAST_DATA}" ]
+#VOLUME [ "${OPENCAST_DATA}" ]
 
 HEALTHCHECK --timeout=10s CMD /docker-healthcheck.sh
 ENTRYPOINT ["/docker-entrypoint.sh"]
