@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Add a comment just before the line where you would want the rebuild to start from
+
 FROM openjdk:8-jdk-slim-stretch AS build
 
 ARG repo="https://github.com/cilt-uct/opencast.git"
@@ -43,6 +45,13 @@ RUN apt-get update \
  && mvn --quiet --batch-mode install -DskipTests=true -Dcheckstyle.skip=true -DskipJasmineTests=true \
  && tar -xzf build/opencast-dist-${OPENCAST_DISTRIBUTION}-*.tar.gz --strip 1 -C "${OPENCAST_HOME}" \
  && rm -rf "${OPENCAST_SRC}" /tmp/* /var/lib/apt/lists/* ~/.m2 ~/.npm ~/.node-gyp /usr/lib/node_modules
+
+#RUN cd "${CONFIG_SRC}" \
+# && git checkout "${OPENCAST_BRANCH}" \
+# && cp files/config/default/etc/org.opencastproject.execute.impl.ExecuteServiceImpl.cfg "${OPENCAST_HOME}"/etc/ \
+# && cp files/worker/wfexec/* "${OPENCAST_HOME}"/wfexec \
+# && cp files/config/default/etc/workflows/* "${OPENCAST_HOME}"/etc/workflows \
+# && cp files/config/default/etc/encoding/* "${OPENCAST_HOME}"/etc/encoding
 
 RUN cd "${CONFIG_SRC}" \
  && git checkout "${OPENCAST_BRANCH}" \
